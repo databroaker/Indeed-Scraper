@@ -5,9 +5,11 @@ import os
 from discord_webhook import DiscordWebhook, DiscordEmbed
 from bs4 import BeautifulSoup
 
-def send_discord_webhook(webhook_url, title, description, fields=None, color="03b2f8"):
+blacklist_file = "blacklist.pkl"
+
+def send_discord_webhook(webhook_url, title, description, url, fields=None, color="03b2f8"):
     webhook = DiscordWebhook(url=webhook_url, username="Job Scraper Bot")
-    embed = DiscordEmbed(title=title, description=description, color=color)
+    embed = DiscordEmbed(title=title, description=description, color=color, url=url)
 
     # Add fields if provided
     if fields:
@@ -15,8 +17,7 @@ def send_discord_webhook(webhook_url, title, description, fields=None, color="03
             embed.add_embed_field(name=field['name'], value=field['value'], inline=False)
 
     # Optional: Add author, footer, timestamp
-    embed.set_author(name="Indeed Scraper", url="https://www.indeed.com")
-    embed.set_footer(text="Scraped on July 19, 2025")
+    embed.set_author(name="Indeed Scraper", url=url)
     embed.set_timestamp()
 
     webhook.add_embed(embed)
@@ -26,6 +27,36 @@ def send_discord_webhook(webhook_url, title, description, fields=None, color="03
     except Exception as e:
         print(f"Error sending webhook: {e}", file=sys.stderr)
 
+def send_chunked_webhooks(webhook_url, title, plaintext, url):
+    max_length = 4096
+    if len(plaintext) <= max_length:
+        # Send directly if under or equal to limit
+        send_discord_webhook(webhook_url, title, plaintext, url)
+    else:
+        # Split plaintext into chunks
+        chunks = []
+        current_pos = 0
+
+        while current_pos < len(plaintext):
+            # Find the end of the chunk (up to max_length)
+            end_pos = min(current_pos + max_length, len(plaintext))
+
+            # Adjust end_pos to avoid splitting mid-word
+            if end_pos < len(plaintext):
+                while end_pos > current_pos and plaintext[end_pos - 1] not in (' ', '\n'):
+                    end_pos -= 1
+                if end_pos == current_pos:  # No space found, force split
+                    end_pos = current_pos + max_length
+
+            # Add the chunk
+            chunks.append(plaintext[current_pos:end_pos])
+            current_pos = end_pos
+
+        # Send each chunk with the appropriate title
+        for i, chunk in enumerate(chunks):
+            chunk_title = title if i == 0 else f"{title} (Part {i + 1})"
+            send_discord_webhook(webhook_url, chunk_title, chunk.strip(), url)
+
 def read_pickle_file(file_path):
     if os.path.exists(file_path):
         try:
@@ -34,11 +65,34 @@ def read_pickle_file(file_path):
             return data
         except (pickle.PicklingError, EOFError, FileNotFoundError) as e:
             print(f"Error reading pickle file '{file_path}': {e}", file=sys.stderr)
-            return None
+            return dict()
     else:
         print(f"Pickle file '{file_path}' does not exist.", file=sys.stderr)
-        return None
+        return dict()
 
+def save_list_to_pickle(data_list, file_path):
+    """
+    Save a list to a pickle file.
+
+    Args:
+        data_list (list): The list to save.
+        file_path (str): The path to the pickle file (e.g., 'mylist.pkl').
+
+    Returns:
+        bool: True if the save was successful, False otherwise.
+    """
+    try:
+        # Ensure the directory exists
+        os.makedirs(os.path.dirname(file_path), exist_ok=True) if os.path.dirname(file_path) else None
+
+        # Open the file in binary write mode and save the list
+        with open(file_path, 'wb') as file:
+            pickle.dump(data_list, file)
+        print(f"List successfully saved to {file_path}")
+        return True
+    except (OSError, pickle.PicklingError) as e:
+        print(f"Error saving list to {file_path}: {e}")
+        return False
 
 def html_to_discord_markdown(html_content):
     """
@@ -136,9 +190,9 @@ def html_to_discord_markdown(html_content):
 
     return markdown
 
-webhook_url = "https://discordapp.com/api/webhooks/1396233755592626359/03m_JSuuaaUxfVAs84qlXPEGc6Rnsh7yBmHqOPfd59XUsADDWc8u8cPgL91wCKvAYA6j"
+webhook_url = "https://discordapp.com/api/webhooks/1396275185514057788/3oyqTqzIqCbZ9qkHdd8fYKYEhg1qBjUoyymPrPXOjJ0f1WghHCtztF59qAktuGHxOSEV"
 
-data = read_pickle_file("data.pkl")
+blacklist = read_pickle_file(blacklist_file)
 
 driver = ChromiumPage()
 driver.get('https://indeed.com')
@@ -179,5 +233,11 @@ while True:
         print(plaintext)
         print("+++")
 
-        send_discord_webhook(webhook_url, title, plaintext)
+        lnk = "https://www.indeed.com/viewjob?jk={}&from=shareddesktop_copy".format(jobKey)
 
+        if jobKey not in blacklist.keys():
+            send_chunked_webhooks(webhook_url, title, plaintext, lnk)
+            blacklist[jobKey] = {"title": title, "desecription": plaintext}
+            save_list_to_pickle(blacklist, blacklist_file)
+            print("Sleeping for 10...")
+            time.sleep(10)
