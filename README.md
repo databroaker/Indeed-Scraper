@@ -1,0 +1,3 @@
+# Indeed Scraper
+
+This project uses DrissionPage to scrape Indeed for job listings matching the users given criteria, bypassing Cloudflare security. The main search functionality is automated in-the-browser, while the detailed job listings are pulled from the Indeed API by passing cookies from DrissionPage to a session object, skirting the Cloudflare security check. Job listings are saved into a Python dictionary, and new Job listings are sent to a Discord channel as a notification.
